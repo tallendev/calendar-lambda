@@ -61,6 +61,9 @@ def calendar_request_events(minutes, channels):
     ret = {}
     events = get_events_in_range(minutes)
     print("events:", events)
+
+    for key in channels:
+        ret[key] = []
     for event in events:
         text_content = event["summary"]
         fkey = None
@@ -74,8 +77,6 @@ def calendar_request_events(minutes, channels):
         start = event['start'].get('dateTime', event['start'].get('date'))
         start = dateutil.parser.isoparse(start)
         start = start.astimezone(pytz.timezone("US/Central"))
-        if fkey not in ret:
-            ret[fkey] = []
         ret[fkey].append((text_content, start))
 
     # return should be a dict (channel key) of lists (events) containing tuple of 
@@ -88,8 +89,16 @@ def keyword_response(text, uid, channelid):
     time_max = None
     channel_keys = []
     
+    print("processing keyword response, text:", text)
     if "who" in text:
-        return f"hey <@{uid}>, my name is SVOLidarity, the volunteer who reminds you of all your upcoming events, but you can call me svollie."
+        payload = {'channel': config.CHANNEL_TAGS[config.CHANNEL_ID_TAG[channelid]], 'text': f"hey <@{uid}>, my name is SVOLidarity, the volunteer who reminds you of all your upcoming events, but you can call me svollie."}
+        headers = {"Authorization": f"Bearer {config.BOT_OAUTH}", 'Content-Type': 'application/json'}
+
+        print("got a who request")
+        print("headers:", headers)
+        print("payload:", payload)
+        r = requests.post(SLACK_URL, json=payload, headers=headers)
+        return
     elif "week" in text:
         time_str = "7 days"
         time_max = ONE_WEEK 
@@ -108,7 +117,7 @@ def keyword_response(text, uid, channelid):
 
     print("minutes, channels:", time_max, ",", channel_keys)
     events_dicts = calendar_request_events(time_max, channel_keys)
-    print(events_dicts)
+    print("events dict:", events_dicts)
 
     for key, events in events_dicts.items():
         response = None
@@ -144,14 +153,16 @@ def process_user_event(event):
     # there has to be a better way to unpack the JSON from slack
     # url verification is to ensure we actually own the endpoint
     if mes_body['type'] == "url_verification":
-        print ("responding to channel")
+        print ("responding to challenge")
         challenge = mes_body['challenge']
         ret = {"content-type" : "text/plain", "challenge" : challenge}
 
     # should cover any slash commands or direct @bot tags that we implement
     elif mes_body['type'] == "event_callback":
+        print("event callback caught")
         event = mes_body['event']
         if event['type'] == "app_mention":
+            print("doing app mention")
             uid = event['user']
             text = event['text']
             channel = event['channel']
@@ -172,12 +183,14 @@ def lambda_handler(event, context):
     ret = None
     # should be an auto-timer event
     if event == {} or event == None:
+        # even though this isn't keyword it's simplest to lump this in as the null case
         ret = keyword_response("", None, "all")
     elif "body" in event:
         ret = process_user_event(event)
     else:
         print("no body in event?")
 
+    print("done")
     return ret
 
 if __name__== "__main__":
