@@ -15,6 +15,7 @@ from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
+
 SLACK_URL="https://slack.com/api/chat.postMessage"
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
@@ -24,6 +25,7 @@ ONE_MONTH = 43200
 # auto check time limit
 AUTO_TIME = 15
 
+# relies on service token from google api dashboard; different than user token which we don't use anymore
 def get_service():
     creds = None
     creds = service_account.Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
@@ -31,8 +33,8 @@ def get_service():
 
     return service
 
+# grabs all events between now and now+minutes from API, then trims events that have already started
 def get_events_in_range(minutes):
-
     service = get_service()
     dt_now = datetime.datetime.utcnow()
     now = dt_now.isoformat() + 'Z' # 'Z' indicates UTC time
@@ -57,6 +59,10 @@ def get_events_in_range(minutes):
 
     return ret_events
 
+# For each channel, grabs events within time delta and removes channel tag from event subject, also 
+#   verifies timezone which is hardcoded as CST for SC21
+# minutes: how far in the future to look for events
+# channels: which channels to search for events for; channels are searched and posted independently
 def calendar_request_events(minutes, channels):
     ret = {}
     events = get_events_in_range(minutes)
@@ -83,13 +89,17 @@ def calendar_request_events(minutes, channels):
     # (event name, datetime with CST timezone)
     return ret
 
-
+# Posts responses to requests to slack, depending on message content.
+# text: raw text from slack message if here because of @ tag; should contain keyword
+# uid: uid who sent raw text
+# channelid: channel originating request
 def keyword_response(text, uid, channelid):
     time_str = ""
     time_max = None
     channel_keys = []
     
     print("processing keyword response, text:", text)
+    # what kind of message are we responding to?
     if "who" in text:
         payload = {'channel': config.CHANNEL_TAGS[config.CHANNEL_ID_TAG[channelid]], 'text': f"hey <@{uid}>, my name is SVOLidarity, the volunteer who reminds you of all your upcoming events, but you can call me svollie."}
         headers = {"Authorization": f"Bearer {config.BOT_OAUTH}", 'Content-Type': 'application/json'}
@@ -119,6 +129,7 @@ def keyword_response(text, uid, channelid):
     events_dicts = calendar_request_events(time_max, channel_keys)
     print("events dict:", events_dicts)
 
+    # for all the channels, events returned, figure out a response
     for key, events in events_dicts.items():
         response = None
         if len(events) > 0:
@@ -145,6 +156,7 @@ def keyword_response(text, uid, channelid):
     return
 
 
+# Filters out events that are just slack url verification; otherwise whould be user event
 def process_user_event(event):
     mes_body = json.loads(event['body'])
     print("mes_body:", mes_body)
@@ -175,6 +187,7 @@ def process_user_event(event):
     return ret
 
 
+# just determines if we have a default case of timer interrupt or if user requested info; default is fastpath.
 def lambda_handler(event, context):
 
     print("event:", event)
