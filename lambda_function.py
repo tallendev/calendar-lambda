@@ -97,6 +97,8 @@ def keyword_response(text, uid, channelid):
     time_str = ""
     time_max = None
     channel_keys = []
+
+    text = text.lower()
     
     print("processing keyword response, text:", text)
     # what kind of message are we responding to?
@@ -117,12 +119,28 @@ def keyword_response(text, uid, channelid):
         time_str = "30 days"
         time_max = ONE_MONTH
         channel_keys = [config.CHANNEL_ID_TAG[channelid]]
+    elif "hey" in text or "hello" in text or "hi " in text:
+        payload = {'channel': config.CHANNEL_TAGS[config.CHANNEL_ID_TAG[channelid]], 'text': f"Hi <@{uid}>!"}
+        headers = {"Authorization": f"Bearer {config.BOT_OAUTH}", 'Content-Type': 'application/json'}
+
+        print("got a hey request")
+        print("headers:", headers)
+        print("payload:", payload)
+        r = requests.post(SLACK_URL, json=payload, headers=headers)
+        return
+        
     elif uid == None:
         time_str = f"{AUTO_TIME} minutes"
         time_max = AUTO_TIME
         channel_keys = config.CHANNEL_TAGS.keys()
     else:
-        print ("Don't know how to respond")
+        payload = {'channel': config.CHANNEL_TAGS[config.CHANNEL_ID_TAG[channelid]], 'text': f'<@{uid}> sorry, i dont know how to respond :( try one of these keywords: "week", "month", "who", "hello"'}
+        headers = {"Authorization": f"Bearer {config.BOT_OAUTH}", 'Content-Type': 'application/json'}
+
+        print("got a hey request")
+        print("headers:", headers)
+        print("payload:", payload)
+        r = requests.post(SLACK_URL, json=payload, headers=headers)
         return
 
     print("minutes, channels:", time_max, ",", channel_keys)
