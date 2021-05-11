@@ -25,6 +25,27 @@ ONE_MONTH = 43200
 # auto check time limit
 AUTO_TIME = 15
 
+from io import StringIO
+from html.parser import HTMLParser
+
+#https://stackoverflow.com/a/925630
+class MLStripper(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.reset()
+        self.strict = False
+        self.convert_charrefs= True
+        self.text = StringIO()
+    def handle_data(self, d):
+        self.text.write(d)
+    def get_data(self):
+        return self.text.getvalue()
+
+def strip_tags(html):
+    s = MLStripper()
+    s.feed(html)
+    return s.get_data()
+
 # relies on service token from google api dashboard; different than user token which we don't use anymore
 def get_service():
     creds = None
@@ -72,6 +93,7 @@ def calendar_request_events(minutes, channels):
         ret[key] = []
     for event in events:
         text_content = event["summary"]
+        text_desc = strip_tags(event.get("description", ""))
         fkey = None
         for key in channels:
             if f"[{key}]" in text_content:
@@ -83,7 +105,7 @@ def calendar_request_events(minutes, channels):
         start = event['start'].get('dateTime', event['start'].get('date'))
         start = dateutil.parser.isoparse(start)
         start = start.astimezone(pytz.timezone("US/Central"))
-        ret[fkey].append((text_content, start))
+        ret[fkey].append((text_content, start, text_desc))
 
     # return should be a dict (channel key) of lists (events) containing tuple of 
     # (event name, datetime with CST timezone)
@@ -103,7 +125,7 @@ def keyword_response(text, uid, channelid):
     print("processing keyword response, text:", text)
     # what kind of message are we responding to?
     if "who" in text:
-        payload = {'channel': config.CHANNEL_TAGS[config.CHANNEL_ID_TAG[channelid]], 'text': f"hey <@{uid}>, my name is SVOLidarity, the volunteer who reminds you of all your upcoming events, but you can call me svollie."}
+        payload = {'channel': config.CHANNEL_TAGS[config.CHANNEL_ID_TAG[channelid]][0], 'text': f"hey <@{uid}>, my name is SVOLidarity, the volunteer who reminds you of all your upcoming events, but you can call me svollie."}
         headers = {"Authorization": f"Bearer {config.BOT_OAUTH}", 'Content-Type': 'application/json'}
 
         print("got a who request")
@@ -111,16 +133,20 @@ def keyword_response(text, uid, channelid):
         print("payload:", payload)
         r = requests.post(SLACK_URL, json=payload, headers=headers)
         return
-    elif "week" in text:
-        time_str = "7 days"
-        time_max = ONE_WEEK 
-        channel_keys = [config.CHANNEL_ID_TAG[channelid]]
     elif "month" in text:
         time_str = "30 days"
         time_max = ONE_MONTH
-        channel_keys = [config.CHANNEL_ID_TAG[channelid]]
+        base_key = config.CHANNEL_TAGS[config.CHANNEL_ID_TAG[channelid]][0]
+        channel_keys = [k for k,v in config.CHANNEL_TAGS.items() if base_key in v ]
+    elif "week" in text:
+        time_str = "7 days"
+        time_max = ONE_WEEK 
+        #channel_keys = [k for k,v in config.CHANNEL_ID_TAG.items() if v == config.CHANNEL_ID_TAG[channelid]]
+        # i don't love this but in the event a channel has more than one associated tag we pull all tags
+        base_key = config.CHANNEL_TAGS[config.CHANNEL_ID_TAG[channelid]][0]
+        channel_keys = [k for k,v in config.CHANNEL_TAGS.items() if base_key in v ]
     elif "hey" in text or "hello" in text or "hi " in text:
-        payload = {'channel': config.CHANNEL_TAGS[config.CHANNEL_ID_TAG[channelid]], 'text': f"Hi <@{uid}>!"}
+        payload = {'channel': config.CHANNEL_TAGS[config.CHANNEL_ID_TAG[channelid]][0], 'text': f"Hi <@{uid}>!"}
         headers = {"Authorization": f"Bearer {config.BOT_OAUTH}", 'Content-Type': 'application/json'}
 
         print("got a hey request")
@@ -128,13 +154,12 @@ def keyword_response(text, uid, channelid):
         print("payload:", payload)
         r = requests.post(SLACK_URL, json=payload, headers=headers)
         return
-        
     elif uid == None:
         time_str = f"{AUTO_TIME} minutes"
         time_max = AUTO_TIME
         channel_keys = config.CHANNEL_TAGS.keys()
     else:
-        payload = {'channel': config.CHANNEL_TAGS[config.CHANNEL_ID_TAG[channelid]], 'text': f'<@{uid}> sorry, i dont know how to respond :( try one of these keywords: "week", "month", "who", "hello"'}
+        payload = {'channel': config.CHANNEL_TAGS[config.CHANNEL_ID_TAG[channelid]][0], 'text': f'<@{uid}> sorry, i don\'t know how to respond :( try one of these keywords: "week", "month", "who", "hello"'}
         headers = {"Authorization": f"Bearer {config.BOT_OAUTH}", 'Content-Type': 'application/json'}
 
         print("got a hey request")
@@ -146,10 +171,29 @@ def keyword_response(text, uid, channelid):
     print("minutes, channels:", time_max, ",", channel_keys)
     events_dicts = calendar_request_events(time_max, channel_keys)
     print("events dict:", events_dicts)
-
+    print()
+    if uid != None:
+        all_events = events_dicts.values()
+        events_dicts = {config.CHANNEL_ID_TAG[channelid] : sorted(sum(all_events,[]), key=lambda e: e[1])}
+    else:
+        # combine all events that go to another channel for each channel
+        new_events_dicts = {}
+        for key in events_dicts.keys():
+            tag = config.CHANNEL_TAGS[key][0]
+            if tag is None:
+                continue
+            print(f"key: {key}")
+            channel_vals = [events_dicts[k] for k,v in config.CHANNEL_TAGS.items() if tag in v]
+            new_events_dicts[key] = sorted(sum(channel_vals,[]), key=lambda e: e[1])
+        events_dicts = new_events_dicts
+        print("events_dicts:", events_dicts)
+        print()
     # for all the channels, events returned, figure out a response
     for key, events in events_dicts.items():
+        if config.CHANNEL_TAGS[key][0] is None:
+            continue
         response = None
+        print ("local events:", events)
         if len(events) > 0:
             if uid != None:
                 response = f'hey <@{uid}>, here are the event(s) coming up for {config.CHANNEL_STRINGS[key]} in the next {time_str}:\n'
@@ -159,8 +203,11 @@ def keyword_response(text, uid, channelid):
             for event in events:
                 event_name = event[0]
                 event_time = event[1]
+                event_desc = event[2]
+                if not event_desc or event_desc.isspace():
+                    event_desc = "no event info found"
                 event_time = event_time.strftime('on %a %x at %X %Z')
-                response += f"{event[0]} {event_time}\n"
+                response += f"- {event[0]} {event_time} - {event_desc}\n"
         else:
             if uid != None:
                 response = f"hey <@{uid}>, i didn't find any events for {config.CHANNEL_STRINGS[key]} in the next {time_str} : ("
@@ -168,7 +215,7 @@ def keyword_response(text, uid, channelid):
                 print (f"no upcoming events for autocheck in {key}")
                 continue
             
-        payload = {'channel': config.CHANNEL_TAGS[key], 'text':response}
+        payload = {'channel': config.CHANNEL_TAGS[key][0], 'text':response, "unfurl_links": "false", "unfurl_media" : "false"}
         headers = {"Authorization": f"Bearer {config.BOT_OAUTH}", 'Content-Type': 'application/json'}
         r = requests.post(SLACK_URL, json=payload, headers=headers)
     return
