@@ -94,6 +94,8 @@ def calendar_request_events(minutes, channels):
     for event in events:
         text_content = event["summary"]
         text_desc = strip_tags(event.get("description", ""))
+        print("event_desc =", event.get("description", ""))
+        print("text_desc =", text_desc)
         fkey = None
         for key in channels:
             if f"[{key}]" in text_content:
@@ -186,7 +188,7 @@ def keyword_response(text, uid, channelid):
             channel_vals = [events_dicts[k] for k,v in config.CHANNEL_TAGS.items() if tag in v]
             new_events_dicts[key] = sorted(sum(channel_vals,[]), key=lambda e: e[1])
         events_dicts = new_events_dicts
-        print("events_dicts:", events_dicts)
+        print("combined_events_dicts:", events_dicts)
         print()
     # for all the channels, events returned, figure out a response
     for key, events in events_dicts.items():
