@@ -98,7 +98,7 @@ def calendar_request_events(minutes, channels):
         print("text_desc =", text_desc)
         fkey = None
         for key in channels:
-            if f"[{key}]" in text_content.lower():
+            if f"[{key}]".lower() in text_content.lower():
                 text_content = text_content.replace(f"[{key}]", '').strip()
                 fkey = key
                 break  
